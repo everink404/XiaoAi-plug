@@ -1,0 +1,50 @@
+name: Publish ChatGPT preview APK
+
+on:
+  push:
+    branches: [ feature/subscription-model-entry ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Publish ChatGPT preview APK'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK platform
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          yes | "$SDKMANAGER" --licenses >/dev/null
+          "$SDKMANAGER" "platforms;android-37.0"
+      - name: Build and test preview APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --stacktrace
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="chatgpt-preview-2026.10.28"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          sha256sum "$APK" > "${APK}.sha256"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          ChatGPT 订阅入口预览版：支持官方登录、账户模型列表和文本对话；小爱继续负责语音识别与播报。
+
+          此 APK 由 GitHub Actions 使用调试签名生成，与上游正式版签名不同。若已安装正式版，通常需要先卸载才能安装；卸载可能删除应用数据。尚未完成真机登录和对话验证。
+          EOF
+          gh release create "$TAG" \
+            "$APK#xiaoai-plug-chatgpt-preview.apk" \
+            "${APK}.sha256#xiaoai-plug-chatgpt-preview.apk.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "ChatGPT 订阅入口预览版" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --prerelease

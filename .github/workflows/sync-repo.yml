@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   sync-commits:
-    if: github.event_name == 'push'
+    if: github.repository == 'lm060719/XiaoAi-plug' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source repo
@@ -27,7 +27,7 @@ jobs:
           git push "https://x-access-token:${SYNC_TOKEN}@github.com/Xposed-Modules-Repo/io.mo.xiaoaiplug.git" master --force
 
   sync-release:
-    if: github.event_name == 'release'
+    if: github.repository == 'lm060719/XiaoAi-plug' && github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source repo

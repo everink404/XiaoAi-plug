@@ -21,4 +21,13 @@ jobs:
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
           yes | "$SDKMANAGER" --licenses >/dev/null
           "$SDKMANAGER" "platforms;android-37.0"
-      - run: chmod +x gradlew && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --stacktrace
+      - name: Build and test APK
+        run: chmod +x gradlew && ./gradlew :app:assembleDebug :app:testDebugUnitTest --stacktrace
+      - name: Verify APK signature and package metadata
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)
+          test -s "$APK" && test -x "$APKSIGNER" && test -x "$AAPT"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$AAPT" dump badging "$APK" | head -n 15

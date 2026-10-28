@@ -122,7 +122,10 @@ fun HomeScreen(
                     checked = config.enabled,
                     onCheckedChange = { on -> vm.update { it.copy(enabled = on) } },
                     title = "启用替换",
-                    summary = if (!config.isUsable) "尚未填写 API Key"
+                    summary = if (!config.isUsable) {
+                        if (config.aiProvider == io.mo.xiaoaiplug.config.AiProvider.CHATGPT_PLAN) "尚未连接 ChatGPT"
+                        else "尚未填写 API Key"
+                    }
                     else "${config.aiProvider.label} · ${config.effectiveModel}"
                 )
                 SwitchPreference(

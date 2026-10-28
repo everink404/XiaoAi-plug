@@ -50,7 +50,8 @@ data class AiConfig(
     // 长回答自动播报只念开头一两句，提示去看屏幕；卡片和喇叭重播仍是全文。默认关闭。
     val speakBrief: Boolean = false,
     // 边生成边播报:答案还在生成时整句一出来就开始念(实验性,默认关)。条件不满足时退回整段播报。
-    val streamSpeech: Boolean = false
+    val streamSpeech: Boolean = false,
+    val chatGptConnected: Boolean = false
 ) {
     /** 解析后的 MCP 服务配置列表 */
     val mcpServers: List<McpServerConfig> get() = McpServerConfig.parseList(mcpServersRaw)
@@ -83,7 +84,7 @@ data class AiConfig(
      * 地址和模型都有默认值兜底了,所以唯一还可能缺的就是密钥 ——
      * 各处"是否已配置"的判断都该问这个,而不是再去看 endpoint 空不空。
      */
-    val isUsable: Boolean get() = apiKey.isNotBlank()
+    val isUsable: Boolean get() = if (aiProvider == AiProvider.CHATGPT_PLAN) chatGptConnected else apiKey.isNotBlank()
 }
 
 // 放行词默认值:只有说"打开/开启/进入/去..."才跳转
@@ -101,6 +102,24 @@ const val DEFAULT_SKIP_TAKEOVER_PATTERN = "闹钟|提醒|播放|上一首|下一
 object ConfigClient {
 
     private val uri: Uri = Uri.parse("content://${ConfigProvider.AUTHORITY}")
+
+    fun chatGptModels(context: Context): List<String> {
+        val result = context.contentResolver.call(uri, ConfigProvider.METHOD_CHATGPT_MODELS, null, null)
+            ?: error("ChatGPT 模块不可用")
+        result.getString("error")?.let { error(it) }
+        return result.getStringArrayList("models")?.toList() ?: emptyList()
+    }
+
+    fun chatGptResponse(context: Context, model: String, messages: org.json.JSONArray): String {
+        val args = Bundle().apply {
+            putString("model", model)
+            putString("messages", messages.toString())
+        }
+        val result = context.contentResolver.call(uri, ConfigProvider.METHOD_CHATGPT_RESPOND, null, args)
+            ?: error("ChatGPT 模块不可用")
+        result.getString("error")?.let { error(it) }
+        return result.getString("answer") ?: error("ChatGPT 未返回回复")
+    }
 
     /**
      * 读配置;provider 不可达时返回 null。
@@ -157,7 +176,8 @@ object ConfigClient {
             mcpServersRaw = result?.getString(ConfigKeys.MCP_SERVERS).orEmpty(),
             showThinking = result?.getString(ConfigKeys.SHOW_THINKING) == "true",
             speakBrief = result?.getString(ConfigKeys.SPEAK_BRIEF) == "true",
-            streamSpeech = result?.getString(ConfigKeys.STREAM_SPEECH) == "true"
+            streamSpeech = result?.getString(ConfigKeys.STREAM_SPEECH) == "true",
+            chatGptConnected = result?.getString(ConfigKeys.CHATGPT_CONNECTED) == "true"
         )
     }
 
@@ -178,6 +198,7 @@ object ConfigClient {
             putString(ConfigKeys.SHOW_THINKING, config.showThinking.toString())
             putString(ConfigKeys.SPEAK_BRIEF, config.speakBrief.toString())
             putString(ConfigKeys.STREAM_SPEECH, config.streamSpeech.toString())
+            putString(ConfigKeys.CHATGPT_CONNECTED, config.chatGptConnected.toString())
             putString(ConfigKeys.ENABLED_TOOLS, config.enabledTools)
             putString(ConfigKeys.SHELL_POLICY, config.shellPolicy)
             putString(ConfigKeys.USE_NATIVE_TOOLS, config.useNativeTools.toString())

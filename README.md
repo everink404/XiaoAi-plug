@@ -104,6 +104,14 @@
 
 ## 配套 App
 
+### ChatGPT 订阅接入（开发分支）
+
+在「设置 → AI 接入」选择「ChatGPT 订阅」，点击「使用 ChatGPT 登录」，在系统浏览器中授权使用订阅额度。授权后可以获取该账户可用的模型列表并测试回复。此接入调用 OpenAI 官方 Responses API，不需要填 API Key；使用量受 ChatGPT 账户和授权限制约束。模块仍使用小爱的语音识别与播报，订阅接入只处理文本问答。ChatGPT 订阅与原有 OpenAI API Key 接入是两个独立选项。
+
+订阅令牌只保存在模块的私有存储中，小爱进程通过受限的跨进程接口请求完整回复，不会收到令牌。当前订阅接入使用文本约定调用本机工具，因此回答与工具调用要等整轮模型回复结束后才显示；原有 API Key 接入的流式显示不受影响。首次使用请在真机上完成浏览器授权和一次「测试连接」。
+
+参考：[OpenAI 开源应用授权说明](https://developers.openai.com/siwc/token-sharing-open-source)、[当前能力限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+
 模块自带 HyperOS 风格界面（Compose + Miuix），三个标签页：
 
 - **首页** — 模块激活状态、配置完整度、快捷入口

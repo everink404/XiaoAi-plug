@@ -23,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.mo.xiaoaiplug.config.AiProvider
 import io.mo.xiaoaiplug.config.DEFAULT_SYSTEM_PROMPT
 import io.mo.xiaoaiplug.ui.ConfigViewModel
+import io.mo.xiaoaiplug.ui.ChatGptAuthState
 import io.mo.xiaoaiplug.ui.ModelListState
 import io.mo.xiaoaiplug.ui.TestState
 import io.mo.xiaoaiplug.ui.nav.CardContentPadding
@@ -46,6 +47,7 @@ fun AiEndpointScreen(vm: ConfigViewModel, bottomInset: Dp, onBack: () -> Unit) {
     val config by vm.config.collectAsStateWithLifecycle()
     val testState by vm.testState.collectAsStateWithLifecycle()
     val modelList by vm.modelList.collectAsStateWithLifecycle()
+    val chatGptAuth by vm.chatGptAuth.collectAsStateWithLifecycle()
     var keyVisible by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
@@ -63,17 +65,45 @@ fun AiEndpointScreen(vm: ConfigViewModel, bottomInset: Dp, onBack: () -> Unit) {
                     title = "接入方式",
                     items = providers.map { it.label },
                     selectedIndex = providers.indexOf(provider),
-                    // 只存 key，不动用户已填的地址/模型 —— 那两个留空就自动跟着新服务商的默认走，
-                    // 填过的则原样保留，切回来还在。
+                    // 订阅连接使用账户提供的模型列表，进入时清掉此前 API 服务商的模型名。
                     onSelectedIndexChange = { i ->
-                        vm.update { it.copy(provider = providers[i].key) }
+                        vm.update { it.copy(provider = providers[i].key,
+                            model = if (providers[i] == AiProvider.CHATGPT_PLAN) "" else it.model) }
                     }
                 )
             }
         }
-        item { SmallTitle("端点") }
+        if (provider == AiProvider.CHATGPT_PLAN) {
+            item { SmallTitle("ChatGPT 订阅") }
+            item {
+                Card(Modifier.fillMaxWidth(), insideMargin = CardContentPadding) {
+                    val status = when (val s = chatGptAuth) {
+                        is ChatGptAuthState.Connected -> "已连接：${s.email}"
+                        is ChatGptAuthState.Running -> "正在等待浏览器授权…"
+                        is ChatGptAuthState.Failed -> "连接失败：${s.message}"
+                        ChatGptAuthState.Idle -> "登录后可使用已授权的 ChatGPT 订阅额度"
+                    }
+                    Text(status, fontSize = MiuixTheme.textStyles.footnote1.fontSize,
+                        modifier = Modifier.padding(vertical = 8.dp))
+                    TextButton(
+                        text = if (chatGptAuth is ChatGptAuthState.Connected) "重新授权" else "使用 ChatGPT 登录",
+                        onClick = { vm.signInChatGpt() },
+                        enabled = chatGptAuth !is ChatGptAuthState.Running,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (chatGptAuth is ChatGptAuthState.Connected) {
+                        TextButton(text = "断开连接", onClick = { vm.signOutChatGpt() },
+                            modifier = Modifier.fillMaxWidth())
+                    }
+                    Text("此方式使用官方授权的文本模型；语音识别与播报继续由小爱完成。",
+                        fontSize = MiuixTheme.textStyles.footnote2.fontSize,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant)
+                }
+            }
+        } else item { SmallTitle("端点") }
         item {
             Card(Modifier.fillMaxWidth(), insideMargin = CardContentPadding) {
+                if (provider != AiProvider.CHATGPT_PLAN) {
                 ConfigTextField(
                     value = config.endpoint,
                     onValueChange = { v -> vm.updateText { it.copy(endpoint = v) } },
@@ -102,6 +132,7 @@ fun AiEndpointScreen(vm: ConfigViewModel, bottomInset: Dp, onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
                 )
 
+                }
                 ConfigTextField(
                     value = config.model,
                     onValueChange = { v -> vm.updateText { it.copy(model = v) } },

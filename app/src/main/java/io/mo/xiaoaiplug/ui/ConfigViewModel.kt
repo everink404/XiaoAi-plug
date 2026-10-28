@@ -7,6 +7,8 @@ import io.mo.xiaoaiplug.ModuleStatus
 import io.mo.xiaoaiplug.auto.AccessibilityGuard
 import io.mo.xiaoaiplug.config.AiClient
 import io.mo.xiaoaiplug.config.AiConfig
+import io.mo.xiaoaiplug.config.AiProvider
+import io.mo.xiaoaiplug.config.ChatGptPlanAuth
 import io.mo.xiaoaiplug.config.ConfigRepository
 import io.mo.xiaoaiplug.config.HostControl
 import io.mo.xiaoaiplug.config.LogEntry
@@ -40,6 +42,13 @@ sealed interface ModelListState {
     data class Failed(val message: String) : ModelListState
 }
 
+sealed interface ChatGptAuthState {
+    data object Idle : ChatGptAuthState
+    data object Running : ChatGptAuthState
+    data class Connected(val email: String) : ChatGptAuthState
+    data class Failed(val message: String) : ChatGptAuthState
+}
+
 /** 底部提示条停留多久（不含淡出动画的时长）。 */
 private const val TOAST_DURATION_MS = 2000L
 
@@ -65,6 +74,44 @@ class ConfigViewModel(app: Application) : AndroidViewModel(app) {
 
     val config: StateFlow<AiConfig> = repo.config
     val reachable: StateFlow<Boolean> = repo.reachable
+
+    private val _chatGptAuth = MutableStateFlow<ChatGptAuthState>(
+        if (ChatGptPlanAuth.connected(app)) ChatGptAuthState.Connected(ChatGptPlanAuth.email(app))
+        else ChatGptAuthState.Idle
+    )
+    val chatGptAuth: StateFlow<ChatGptAuthState> = _chatGptAuth.asStateFlow()
+
+    fun signInChatGpt() {
+        if (_chatGptAuth.value == ChatGptAuthState.Running) return
+        _chatGptAuth.value = ChatGptAuthState.Running
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { ChatGptPlanAuth.signIn(getApplication()) } }
+            _chatGptAuth.value = result.fold(
+                onSuccess = { email ->
+                    repo.update { it.copy(chatGptConnected = true, model = "") }
+                    repo.flush()
+                    viewModelScope.launch {
+                        val models = withContext(Dispatchers.IO) {
+                            runCatching { io.mo.xiaoaiplug.config.ChatGptPlanClient.listModels(getApplication()) }.getOrDefault(emptyList())
+                        }
+                        if (models.isNotEmpty() && config.value.chatGptConnected &&
+                            config.value.aiProvider == AiProvider.CHATGPT_PLAN && config.value.model.isBlank()) {
+                            repo.update { it.copy(model = models.first()) }
+                        }
+                    }
+                    ChatGptAuthState.Connected(email)
+                },
+                onFailure = { ChatGptAuthState.Failed(it.message ?: "ChatGPT 登录失败") }
+            )
+        }
+    }
+
+    fun signOutChatGpt() {
+        ChatGptPlanAuth.signOut(getApplication())
+        repo.update { it.copy(chatGptConnected = false) }
+        repo.flush()
+        _chatGptAuth.value = ChatGptAuthState.Idle
+    }
 
     private val _status = MutableStateFlow(StatusSnapshot())
     val status: StateFlow<StatusSnapshot> = _status.asStateFlow()
@@ -246,13 +293,14 @@ class ConfigViewModel(app: Application) : AndroidViewModel(app) {
         if (_modelList.value == ModelListState.Loading) return
         val cfg = config.value
         if (!cfg.isUsable) {
-            _modelList.value = ModelListState.Failed("请先填写 API Key")
+            _modelList.value = ModelListState.Failed(
+                if (cfg.aiProvider == AiProvider.CHATGPT_PLAN) "请先登录 ChatGPT" else "请先填写 API Key")
             return
         }
         val generation = ++modelListGeneration
         _modelList.value = ModelListState.Loading
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { AiClient.listModels(cfg) } }
+            val result = withContext(Dispatchers.IO) { runCatching { AiClient.listModels(cfg, getApplication()) } }
             if (generation != modelListGeneration) return@launch
             _modelList.value = result.fold(
                 onSuccess = {
@@ -304,7 +352,8 @@ class ConfigViewModel(app: Application) : AndroidViewModel(app) {
             _testState.value = TestState.Running
             val cfg = config.value
             if (!cfg.isUsable) {
-                _testState.value = TestState.Failed("请先填写 API Key")
+                _testState.value = TestState.Failed(
+                    if (cfg.aiProvider == AiProvider.CHATGPT_PLAN) "请先登录 ChatGPT" else "请先填写 API Key")
                 return@launch
             }
             val startedAt = System.currentTimeMillis()
@@ -313,7 +362,7 @@ class ConfigViewModel(app: Application) : AndroidViewModel(app) {
                     AiClient.chat(
                         config = cfg.copy(enabledTools = Tools.NONE, useNativeTools = false),
                         userText = "回复两个字：收到",
-                        ctx = null
+                        ctx = if (cfg.aiProvider == AiProvider.CHATGPT_PLAN) getApplication() else null
                     )
                 }
             }

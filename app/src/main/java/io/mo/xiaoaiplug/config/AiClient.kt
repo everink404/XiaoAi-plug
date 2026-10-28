@@ -115,7 +115,10 @@ object AiClient {
      * `/chat/completions` 或 `/messages` 也认。失败照常抛,调用方用 [failureDetail] 说明。
      * 同步阻塞,放后台线程调。
      */
-    fun listModels(config: AiConfig): List<String> {
+    fun listModels(config: AiConfig, ctx: Context? = null): List<String> {
+        if (config.aiProvider == AiProvider.CHATGPT_PLAN) {
+            return ConfigClient.chatGptModels(ctx ?: error("ChatGPT 模型列表需要模块上下文"))
+        }
         val base = config.effectiveEndpoint.trimEnd('/')
             .removeSuffix("/chat/completions")
             .removeSuffix("/messages")
@@ -132,6 +135,7 @@ object AiClient {
                 // 默认一页只有 20 个
                 URL("$base/models?limit=1000")
             }
+            AiProvider.Wire.CHATGPT_PLAN -> error("ChatGPT 模型列表由模块进程处理")
         }
         val text = getText(url, headers).trim()
         // 标准形状是 {"data":[{"id":…}]};有的兼容端点用 "models",也有直接返回数组的
@@ -316,7 +320,8 @@ object AiClient {
         thinking: ThinkingTrace
     ): String {
         val specs = Tools.allSpecs(config.enabledTools, config.mcpServers)
-        val useNative = config.useNativeTools && nativeToolsSupported && specs.isNotEmpty()
+        val useNative = config.aiProvider != AiProvider.CHATGPT_PLAN &&
+            config.useNativeTools && nativeToolsSupported && specs.isNotEmpty()
         // 模型说"我没有这个能力"时,必须能一眼分清是**没给它工具**还是**给了它没用** ——
         // 光看答案分不出来,只能靠猜。
         Log.i(TAG, "offering ${specs.size} tools (native=$useNative): " +
@@ -530,14 +535,14 @@ object AiClient {
             // 用 tool_choice=none 禁止再调。有的兼容端点不认 none 会回 400 ——
             // 那不代表它不支持原生工具(前几轮刚用过),所以不走下面的降级,退回 auto 只靠提示收尾。
             try {
-                return request(config, messages, specs, sink, noToolCalls = true)
+                return request(config, messages, specs, ctx, sink, noToolCalls = true)
             } catch (t: HttpError) {
                 if (t.code != 400) throw t
                 Log.w(TAG, "endpoint rejected tool_choice=none, retrying with auto: ${t.body.take(200)}")
             }
         }
         return try {
-            request(config, messages, specs, sink)
+            request(config, messages, specs, ctx, sink)
         } catch (t: HttpError) {
             if (specs.isNotEmpty() && t.code == 400) {
                 Log.w(TAG, "endpoint rejected native tools (400), falling back to text convention: ${t.body.take(200)}")
@@ -551,7 +556,7 @@ object AiClient {
                 // 注意本轮模型看不到工具表,可能直接给个"我不知道"——可以接受,
                 // 因为降级只会发生一次,之后整个进程都走文本路。
                 // 400 在流开始前就从 responseCode 拿到,此刻 sink 还没推过任何 delta,重发照常带 sink。
-                request(config, messages, emptyList(), sink)
+                request(config, messages, emptyList(), ctx, sink)
             } else throw t
         }
     }
@@ -567,6 +572,7 @@ object AiClient {
         config: AiConfig,
         messages: JSONArray,
         specs: List<Tools.Spec>,
+        ctx: Context?,
         sink: StreamSink?,
         noToolCalls: Boolean = false
     ): JSONObject = when (config.aiProvider.wire) {
@@ -576,6 +582,13 @@ object AiClient {
         AiProvider.Wire.ANTHROPIC ->
             if (sink != null) postAnthropicStream(config, messages, specs, sink, noToolCalls)
             else postAnthropic(config, messages, specs, noToolCalls)
+        AiProvider.Wire.CHATGPT_PLAN -> {
+            val answer = ConfigClient.chatGptResponse(
+                ctx ?: error("ChatGPT 回复需要模块上下文"), config.effectiveModel, messages
+            )
+            sink?.onDelta(answer)
+            JSONObject().put("role", "assistant").put("content", answer)
+        }
     }
 
     private class HttpError(val code: Int, val body: String) : RuntimeException("HTTP $code: $body")

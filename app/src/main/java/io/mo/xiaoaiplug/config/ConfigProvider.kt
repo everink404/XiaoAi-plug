@@ -7,6 +7,7 @@ import android.content.SharedPreferences
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
+import android.os.Binder
 import io.mo.xiaoaiplug.auto.AccessibilityGuard
 import io.mo.xiaoaiplug.auto.UiAutoService
 
@@ -15,6 +16,7 @@ object ConfigKeys {
     const val PROVIDER = "provider"
     const val ENDPOINT = "endpoint"
     const val API_KEY = "api_key"
+    const val CHATGPT_CONNECTED = "chatgpt_connected"
     const val MODEL = "model"
     const val SYSTEM_PROMPT = "system_prompt"
     const val ENABLED = "enabled"
@@ -56,7 +58,7 @@ object ConfigKeys {
     const val MCP_SERVERS = "mcp_servers"
 
     val ALL = listOf(
-        PROVIDER, ENDPOINT, API_KEY, MODEL, SYSTEM_PROMPT, ENABLED,
+        PROVIDER, ENDPOINT, API_KEY, CHATGPT_CONNECTED, MODEL, SYSTEM_PROMPT, ENABLED,
         BLOCK_VIEW_JUMP, JUMP_ALLOW_WORDS,
         BLOCK_WEB_SEARCH, WEB_SEARCH_ALLOW_WORDS,
         SPEAK_ANSWER, SHOW_THINKING, SPEAK_BRIEF, STREAM_SPEECH,
@@ -77,6 +79,8 @@ class ConfigProvider : ContentProvider() {
         const val AUTHORITY = "io.mo.xiaoaiplug.config"
         const val METHOD_GET = "get"
         const val METHOD_SET = "set"
+        const val METHOD_CHATGPT_MODELS = "chatgpt_models"
+        const val METHOD_CHATGPT_RESPOND = "chatgpt_respond"
 
         // 界面自动化:Hook 在小爱进程,无障碍服务在本模块进程,靠这两个方法过桥。
         // 侦察用,adb 也能直接调:
@@ -165,9 +169,40 @@ class ConfigProvider : ContentProvider() {
         return caller == SHELL_PACKAGE && method in SHELL_ALLOWED_METHODS
     }
 
+    /** Subscription use is restricted to this module and the one hooked XiaoAi package.
+     * Verify the Binder UID in addition to callingPackage before any network request. */
+    private fun isChatGptCallerAllowed(): Boolean {
+        val caller = callingPackage ?: return false
+        if (caller !in ALLOWED_CALLERS) return false
+        val packages = context!!.packageManager.getPackagesForUid(Binder.getCallingUid()) ?: return false
+        return caller in packages
+    }
+
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
         if (!isCallerAllowed(method)) return null
+        if (method == METHOD_CHATGPT_MODELS || method == METHOD_CHATGPT_RESPOND) {
+            if (!isChatGptCallerAllowed()) return null
+            if (prefs().getString(ConfigKeys.PROVIDER, "") != AiProvider.CHATGPT_PLAN.key) return null
+        }
         return when (method) {
+            METHOD_CHATGPT_MODELS -> Bundle().apply {
+                runCatching { ChatGptPlanClient.listModels(context!!) }.fold(
+                    onSuccess = { putStringArrayList("models", ArrayList(it)) },
+                    onFailure = { putString("error", it.message ?: "模型列表获取失败") }
+                )
+            }
+            METHOD_CHATGPT_RESPOND -> Bundle().apply {
+                runCatching {
+                    ChatGptPlanClient.respond(
+                        context!!,
+                        extras?.getString("model").orEmpty(),
+                        org.json.JSONArray(extras?.getString("messages").orEmpty())
+                    )
+                }.fold(
+                    onSuccess = { putString("answer", it) },
+                    onFailure = { putString("error", it.message ?: "ChatGPT 回复失败") }
+                )
+            }
             METHOD_GET -> {
                 val p = prefs()
                 val allPrefs = p.all

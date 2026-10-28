@@ -18,12 +18,13 @@ enum class AiProvider(
     val defaultModel: String
 ) {
     OPENAI("openai", "OpenAI 兼容", Wire.OPENAI, "https://api.openai.com/v1", "gpt-4o-mini"),
+    CHATGPT_PLAN("chatgpt_plan", "ChatGPT 订阅", Wire.CHATGPT_PLAN, "https://api.openai.com/v1", "gpt-6.1-sol"),
     ANTHROPIC("anthropic", "Anthropic", Wire.ANTHROPIC, "https://api.anthropic.com/v1", "claude-opus-4-8"),
     XAI("xai", "xAI (Grok)", Wire.OPENAI, "https://api.x.ai/v1", "grok-4"),
     SILICONFLOW("siliconflow", "硅基流动", Wire.OPENAI, "https://api.siliconflow.cn/v1", "Qwen/Qwen3-8B");
 
     /** 报文协议。同一种协议下换服务商只是换地址,不用改代码。 */
-    enum class Wire { OPENAI, ANTHROPIC }
+    enum class Wire { OPENAI, ANTHROPIC, CHATGPT_PLAN }
 
     companion object {
         val DEFAULT = OPENAI
